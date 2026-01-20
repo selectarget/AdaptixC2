@@ -37,30 +37,29 @@ jobs:
           name: adaptix_server_linux_x64
           path: adaptix_server_linux_x64.tar.gz
 
-  # ====================================================
-  # JOB 2: 构建客户端 (Windows使用MSYS2环境)
+# ====================================================
+  # JOB 2: 构建客户端 (多平台原生构建 - 调试修复版)
   # ====================================================
   build-client:
     name: Build Client
     runs-on: ${{ matrix.os }}
     strategy:
+      # 关键修改 1: 关闭 fail-fast，防止一个平台报错导致全军覆没
+      fail-fast: false
       matrix:
         include:
-          # Linux
           - os: ubuntu-latest
             artifact_name: adaptix_client_linux_elf
             build_shell: bash
             output_file: dist/AdaptixClient
 
-          # macOS
           - os: macos-latest
             artifact_name: adaptix_client_macos_macho
             build_shell: bash
             output_file: dist/AdaptixClient
 
-          # Windows (关键修改：使用 MSYS2 环境)
           - os: windows-latest
-            artifact_name: adaptix_client_windows.zip # 注意这里改成了zip，因为要打包dll
+            artifact_name: adaptix_client_windows.zip
             build_shell: msys2 {0}
             output_file: AdaptixClient/build/AdaptixClient.exe
 
@@ -69,13 +68,13 @@ jobs:
         uses: actions/checkout@v4
 
       # ----------------------------------------------------------------
-      # Windows 环境配置：安装 MSYS2 + MinGW 13 + Qt6 + OpenSSL
+      # Windows 环境配置 (保持不变)
       # ----------------------------------------------------------------
       - name: Setup MSYS2 (Windows Only)
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
         with:
-          msystem: UCRT64  # 使用 UCRT64 环境 (推荐配合 Qt6 + MinGW 13)
+          msystem: UCRT64
           update: true
           install: >-
             git
@@ -86,28 +85,48 @@ jobs:
             mingw-w64-ucrt-x86_64-openssl
 
       # ----------------------------------------------------------------
-      # Linux / macOS 构建
+      # 关键修改 2: Linux 环境依赖安装
+      # 大多数 C2 客户端都需要 OpenSSL 头文件
+      # ----------------------------------------------------------------
+      - name: Install Linux Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libssl-dev pkg-config
+
+      # ----------------------------------------------------------------
+      # Linux / macOS 构建 (关键修改 3: 错误日志显形)
       # ----------------------------------------------------------------
       - name: Build on Linux/macOS
         if: runner.os != 'Windows'
-        run: make client
+        run: |
+          # 尝试编译，如果失败则执行 || 后面的逻辑
+          make client || {
+            echo "================ ERROR LOG ================"
+            # 检查是否有 cmake 错误日志并打印
+            if [ -f AdaptixClient/cmake_error.log ]; then
+              cat AdaptixClient/cmake_error.log
+            fi
+            # 检查是否有 build 错误日志并打印
+            if [ -f AdaptixClient/build_error.log ]; then
+              cat AdaptixClient/build_error.log
+            fi
+            echo "==========================================="
+            exit 1
+          }
 
       # ----------------------------------------------------------------
-      # Windows 构建 (在 MSYS2 Shell 中运行)
+      # Windows 构建 (MSYS2)
       # ----------------------------------------------------------------
       - name: Build on Windows
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
           cd AdaptixClient
-          # 使用 Ninja 生成器 (你指定的)
           cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --config Release
           
-          echo "Build finished. Preparing deployment..."
-          
-          # 关键步骤：使用 windeployqt 自动提取依赖的 DLL (Qt6, OpenSSL, MinGW运行时)
-          # 如果不执行这一步，你的 exe 在别的电脑上双击会报错“缺少 DLL”
+          echo "Deploying dependencies..."
           windeployqt --release --no-translations --compiler-runtime build/AdaptixClient.exe
 
       # ----------------------------------------------------------------
@@ -119,13 +138,16 @@ jobs:
           mkdir -p final_dist
           
           if [ "${{ runner.os }}" == "Windows" ]; then
-             # Windows: 打包整个目录 (exe + dlls)
              cd AdaptixClient/build
-             # 使用 7z 压缩所有内容 (exe 和 windeployqt 拉取的所有 dll)
              7z a ../../final_dist/${{ matrix.artifact_name }} .
           else
-             # Linux/Mac: 单文件
-             cp ${{ matrix.output_file }} final_dist/${{ matrix.artifact_name }}
+             # 确保目标文件存在才复制
+             if [ -f "${{ matrix.output_file }}" ]; then
+                cp ${{ matrix.output_file }} final_dist/${{ matrix.artifact_name }}
+             else
+                echo "Error: Output file not found at ${{ matrix.output_file }}"
+                exit 1
+             fi
           fi
 
       - name: Upload Client Artifact
