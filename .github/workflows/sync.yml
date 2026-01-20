@@ -1,0 +1,40 @@
+name: Upstream Sync
+
+permissions:
+  contents: write
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # 每天 UTC 时间 0点 (北京时间早上8点) 执行
+  workflow_dispatch: # 允许手动点按钮触发测试
+
+jobs:
+  sync_latest_from_upstream:
+    name: Sync latest commits from upstream repo
+    runs-on: ubuntu-latest
+    if: ${{ github.event.repository.fork }} # 只有是 fork 的仓库才执行
+
+    steps:
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          # 关键点：使用 PAT token 检出，这样后续的 push 操作才能触发 Build 工作流
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Sync upstream changes
+        id: sync
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+        with:
+          # 请修改为真实的原始作者仓库地址
+          upstream_sync_repo: Adaptix-Framework/AdaptixC2
+          upstream_sync_branch: main    # 或者是 master，请确认上游的主分支名
+          target_sync_branch: main      # 你自己仓库的主分支
+          target_repo_token: ${{ secrets.PAT_TOKEN }} # 必须使用 PAT
+          test_mode: false
+
+      - name: Sync check
+        if: failure()
+        run: |
+          echo "[Error] 由于上游仓库的 workflow 配置更改，无法自动同步。"
+          echo "[Error] 请手动同步一次以解决冲突。"
+          exit 1
