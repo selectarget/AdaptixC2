@@ -1,40 +1,162 @@
-name: build-adaptix
+name: Build and Release
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  server:
-    runs-on: ubuntu-24.04
+  # ====================================================
+  # JOB 1: 构建服务端 (Docker - 保持不变)
+  # ====================================================
+  build-server:
+    name: Build Server (Docker)
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Build server + extenders
-        run: docker compose --profile build-server-ext up --build --abort-on-container-exit
-      - name: Upload server artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: adaptix-server-dist
-          path: AdaptixServer/server-dist
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-  client:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install deps
+      - name: Build Server via Docker Compose
         run: |
-          sudo apt update
-          sudo apt install -y ninja-build qt6-base-dev qt6-websockets-dev qt6-declarative-dev libssl-dev build-essential
-      - name: Configure
-        run: cmake -S AdaptixClient -B build-client -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="/usr/lib/qt6"
-      - name: Build
-        run: cmake --build build-client
-      - name: Upload client artifacts
+          docker compose --profile build-server-ext up --build server-ext-builder
+
+      - name: Fix Permissions
+        run: sudo chown -R $USER:$USER ./AdaptixServer/server-dist
+
+      - name: Archive Server Artifacts
+        run: |
+          cd ./AdaptixServer/server-dist
+          tar -czvf ../../adaptix_server_linux_x64.tar.gz .
+
+      - name: Upload Server Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: adaptix-client
-          path: build-client/AdaptixClient
+          name: adaptix_server_linux_x64
+          path: adaptix_server_linux_x64.tar.gz
 
+  # ====================================================
+  # JOB 2: 构建客户端 (Windows使用MSYS2环境)
+  # ====================================================
+  build-client:
+    name: Build Client
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - os: ubuntu-latest
+            artifact_name: adaptix_client_linux_elf
+            build_shell: bash
+            output_file: dist/AdaptixClient
+
+          # macOS
+          - os: macos-latest
+            artifact_name: adaptix_client_macos_macho
+            build_shell: bash
+            output_file: dist/AdaptixClient
+
+          # Windows (关键修改：使用 MSYS2 环境)
+          - os: windows-latest
+            artifact_name: adaptix_client_windows.zip # 注意这里改成了zip，因为要打包dll
+            build_shell: msys2 {0}
+            output_file: AdaptixClient/build/AdaptixClient.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ----------------------------------------------------------------
+      # Windows 环境配置：安装 MSYS2 + MinGW 13 + Qt6 + OpenSSL
+      # ----------------------------------------------------------------
+      - name: Setup MSYS2 (Windows Only)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64  # 使用 UCRT64 环境 (推荐配合 Qt6 + MinGW 13)
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-openssl
+
+      # ----------------------------------------------------------------
+      # Linux / macOS 构建
+      # ----------------------------------------------------------------
+      - name: Build on Linux/macOS
+        if: runner.os != 'Windows'
+        run: make client
+
+      # ----------------------------------------------------------------
+      # Windows 构建 (在 MSYS2 Shell 中运行)
+      # ----------------------------------------------------------------
+      - name: Build on Windows
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          cd AdaptixClient
+          # 使用 Ninja 生成器 (你指定的)
+          cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
           
+          echo "Build finished. Preparing deployment..."
+          
+          # 关键步骤：使用 windeployqt 自动提取依赖的 DLL (Qt6, OpenSSL, MinGW运行时)
+          # 如果不执行这一步，你的 exe 在别的电脑上双击会报错“缺少 DLL”
+          windeployqt --release --no-translations --compiler-runtime build/AdaptixClient.exe
+
+      # ----------------------------------------------------------------
+      # 打包与上传
+      # ----------------------------------------------------------------
+      - name: Prepare Artifact
+        shell: bash
+        run: |
+          mkdir -p final_dist
+          
+          if [ "${{ runner.os }}" == "Windows" ]; then
+             # Windows: 打包整个目录 (exe + dlls)
+             cd AdaptixClient/build
+             # 使用 7z 压缩所有内容 (exe 和 windeployqt 拉取的所有 dll)
+             7z a ../../final_dist/${{ matrix.artifact_name }} .
+          else
+             # Linux/Mac: 单文件
+             cp ${{ matrix.output_file }} final_dist/${{ matrix.artifact_name }}
+          fi
+
+      - name: Upload Client Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: final_dist/${{ matrix.artifact_name }}
+
+  # ====================================================
+  # JOB 3: 发布 (保持不变)
+  # ====================================================
+  release:
+    needs: [build-server, build-client]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate Release Tag
+        id: tag
+        run: echo "release_tag=v$(date +'%Y.%m.%d')-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          name: Build ${{ steps.tag.outputs.release_tag }}
+          draft: false
+          prerelease: false
+          files: artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
