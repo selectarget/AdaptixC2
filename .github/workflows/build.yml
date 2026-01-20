@@ -36,10 +36,10 @@ jobs:
         with:
           name: adaptix_server_linux_x64
           path: adaptix_server_linux_x64.tar.gz
-          overwrite: true  # <--- [修复] 允许覆盖旧产物，防止409报错
+          overwrite: true
 
   # ====================================================
-  # JOB 2: 构建客户端 (全量依赖版)
+  # JOB 2: 构建客户端 (最终完美版：净化+补DLL)
   # ====================================================
   build-client:
     name: Build Client
@@ -61,6 +61,7 @@ jobs:
           - os: windows-latest
             artifact_name: adaptix_client_windows.zip
             build_shell: msys2 {0}
+            # 注意：下面的 output_file 变量在 Windows 下其实用不到了，因为我们在步骤里手动处理了
             output_file: AdaptixClient/build/AdaptixClient.exe
 
     steps:
@@ -68,7 +69,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ----------------------------------------------------------------
-      # Windows 环境配置 (MSYS2 全家桶)
+      # Windows 环境配置 (MSYS2)
       # ----------------------------------------------------------------
       - name: Setup MSYS2 (Windows Only)
         if: runner.os == 'Windows'
@@ -93,7 +94,7 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-5compat
 
       # ----------------------------------------------------------------
-      # Linux 环境依赖安装 (Ubuntu 全家桶 + Private Headers)
+      # Linux 环境依赖安装
       # ----------------------------------------------------------------
       - name: Install Linux Dependencies
         if: runner.os == 'Linux'
@@ -135,7 +136,7 @@ jobs:
           }
 
       # ----------------------------------------------------------------
-      # Windows 构建 (MSYS2)
+      # Windows 构建 (MSYS2) - 【关键修改点】
       # ----------------------------------------------------------------
       - name: Build on Windows
         if: runner.os == 'Windows'
@@ -145,11 +146,29 @@ jobs:
           cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --config Release
           
-          echo "Deploying dependencies..."
-          windeployqt --release --no-translations --compiler-runtime build/AdaptixClient.exe
+          echo ">>> 1. Creating Clean Release Directory..."
+          mkdir release_dist
+          
+          # 先把 exe 复制到干净的目录
+          cp build/AdaptixClient.exe release_dist/
+          
+          echo ">>> 2. Running windeployqt on the Clean Directory..."
+          # 让 windeployqt 自动识别依赖，并吐到 release_dist
+          windeployqt --release --no-translations --compiler-runtime --dir release_dist release_dist/AdaptixClient.exe
+
+          echo ">>> 3. Manually Copying Missing MinGW DLLs..."
+          # 暴力解决 "libgcc_s_seh-1.dll not found" 等问题
+          # 这些文件在 MSYS2 UCRT64 的 /ucrt64/bin 目录下
+          
+          cp /ucrt64/bin/libgcc_s_seh-1.dll release_dist/
+          cp /ucrt64/bin/libstdc++-6.dll release_dist/
+          cp /ucrt64/bin/libwinpthread-1.dll release_dist/
+          
+          # 为了保险，把常见的 SSP 库也拷进去（有些加固编译需要）
+          if [ -f /ucrt64/bin/libssp-0.dll ]; then cp /ucrt64/bin/libssp-0.dll release_dist/; fi
 
       # ----------------------------------------------------------------
-      # 打包与上传
+      # 打包与上传 - 【关键修改点：Windows 打包源变更】
       # ----------------------------------------------------------------
       - name: Prepare Artifact
         shell: bash
@@ -157,9 +176,13 @@ jobs:
           mkdir -p final_dist
           
           if [ "${{ runner.os }}" == "Windows" ]; then
-             cd AdaptixClient/build
+             echo "Zipping Clean Windows Release..."
+             # 关键：我们只进入 release_dist 目录打包，这样里面就只有 exe 和 dll
+             # 不会再包含 CMakeFiles, autogen 等垃圾文件
+             cd AdaptixClient/release_dist
              7z a ../../final_dist/${{ matrix.artifact_name }} .
           else
+             # Linux/Mac 逻辑保持不变
              if [ -f "${{ matrix.output_file }}" ]; then
                 cp ${{ matrix.output_file }} final_dist/${{ matrix.artifact_name }}
              else
@@ -173,7 +196,7 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: final_dist/${{ matrix.artifact_name }}
-          overwrite: true # <--- [修复] 允许覆盖旧产物，防止409报错
+          overwrite: true
 
   # ====================================================
   # JOB 3: 发布 Release
@@ -189,7 +212,6 @@ jobs:
 
       - name: Generate Release Tag
         id: tag
-        # 只要代码有变动 (SHA不同)，Tag 就会变，不会冲突
         run: echo "release_tag=v$(date +'%Y.%m.%d')-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
       - name: Create Release
