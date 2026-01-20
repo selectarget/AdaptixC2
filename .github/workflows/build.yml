@@ -204,6 +204,32 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: final_dist/${{ matrix.artifact_name }}
 
+      # ----------------------------------------------------------------
+      # 打包与上传
+      # ----------------------------------------------------------------
+      - name: Prepare Artifact
+        shell: bash
+        run: |
+          mkdir -p final_dist
+          
+          if [ "${{ runner.os }}" == "Windows" ]; then
+             cd AdaptixClient/build
+             7z a ../../final_dist/${{ matrix.artifact_name }} .
+          else
+             if [ -f "${{ matrix.output_file }}" ]; then
+                cp ${{ matrix.output_file }} final_dist/${{ matrix.artifact_name }}
+             else
+                echo "Error: Output file not found at ${{ matrix.output_file }}"
+                exit 1
+             fi
+          fi
+
+      - name: Upload Client Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: final_dist/${{ matrix.artifact_name }}
+
   # ====================================================
   # JOB 3: 发布 (保持不变)
   # ====================================================
