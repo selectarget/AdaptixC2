@@ -38,13 +38,12 @@ jobs:
           path: adaptix_server_linux_x64.tar.gz
 
 # ====================================================
-  # JOB 2: 构建客户端 (多平台原生构建 - 调试修复版)
+  # JOB 2: 构建客户端 (依赖修复版 - 补全 WebSockets)
   # ====================================================
   build-client:
     name: Build Client
     runs-on: ${{ matrix.os }}
     strategy:
-      # 关键修改 1: 关闭 fail-fast，防止一个平台报错导致全军覆没
       fail-fast: false
       matrix:
         include:
@@ -68,7 +67,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ----------------------------------------------------------------
-      # Windows 环境配置 (保持不变)
+      # Windows 环境配置 (修复：新增 qt6-websockets)
       # ----------------------------------------------------------------
       - name: Setup MSYS2 (Windows Only)
         if: runner.os == 'Windows'
@@ -82,35 +81,39 @@ jobs:
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-websockets
             mingw-w64-ucrt-x86_64-openssl
 
       # ----------------------------------------------------------------
-      # 关键修改 2: Linux 环境依赖安装
-      # 大多数 C2 客户端都需要 OpenSSL 头文件
+      # Linux 环境依赖安装 (修复：新增 libqt6websockets6-dev)
       # ----------------------------------------------------------------
       - name: Install Linux Dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake libssl-dev pkg-config
+          # 注意：这里增加了 libqt6websockets6-dev
+          sudo apt-get install -y build-essential cmake libssl-dev pkg-config \
+            qt6-base-dev libqt6websockets6-dev libgl1-mesa-dev libxkbcommon-dev
 
       # ----------------------------------------------------------------
-      # Linux / macOS 构建 (关键修改 3: 错误日志显形)
+      # macOS 环境依赖安装 (Homebrew 的 qt6 通常包含 websockets，保持不变)
+      # ----------------------------------------------------------------
+      - name: Install macOS Dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install qt6
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix qt6)" >> $GITHUB_ENV
+
+      # ----------------------------------------------------------------
+      # Linux / macOS 构建
       # ----------------------------------------------------------------
       - name: Build on Linux/macOS
         if: runner.os != 'Windows'
         run: |
-          # 尝试编译，如果失败则执行 || 后面的逻辑
           make client || {
             echo "================ ERROR LOG ================"
-            # 检查是否有 cmake 错误日志并打印
-            if [ -f AdaptixClient/cmake_error.log ]; then
-              cat AdaptixClient/cmake_error.log
-            fi
-            # 检查是否有 build 错误日志并打印
-            if [ -f AdaptixClient/build_error.log ]; then
-              cat AdaptixClient/build_error.log
-            fi
+            if [ -f AdaptixClient/cmake_error.log ]; then cat AdaptixClient/cmake_error.log; fi
+            if [ -f AdaptixClient/build_error.log ]; then cat AdaptixClient/build_error.log; fi
             echo "==========================================="
             exit 1
           }
@@ -141,7 +144,6 @@ jobs:
              cd AdaptixClient/build
              7z a ../../final_dist/${{ matrix.artifact_name }} .
           else
-             # 确保目标文件存在才复制
              if [ -f "${{ matrix.output_file }}" ]; then
                 cp ${{ matrix.output_file }} final_dist/${{ matrix.artifact_name }}
              else
