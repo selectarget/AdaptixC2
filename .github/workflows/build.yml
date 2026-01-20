@@ -38,8 +38,8 @@ jobs:
           path: adaptix_server_linux_x64.tar.gz
           overwrite: true
 
-  # ====================================================
-  # JOB 2: 构建客户端 (最终完美版：净化+补DLL)
+# ====================================================
+  # JOB 2: 构建客户端 (Windows 终极依赖修复版)
   # ====================================================
   build-client:
     name: Build Client
@@ -61,7 +61,6 @@ jobs:
           - os: windows-latest
             artifact_name: adaptix_client_windows.zip
             build_shell: msys2 {0}
-            # 注意：下面的 output_file 变量在 Windows 下其实用不到了，因为我们在步骤里手动处理了
             output_file: AdaptixClient/build/AdaptixClient.exe
 
     steps:
@@ -94,7 +93,7 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-5compat
 
       # ----------------------------------------------------------------
-      # Linux 环境依赖安装
+      # Linux 环境依赖
       # ----------------------------------------------------------------
       - name: Install Linux Dependencies
         if: runner.os == 'Linux'
@@ -113,7 +112,7 @@ jobs:
             qt6-image-formats-plugins
 
       # ----------------------------------------------------------------
-      # macOS 环境依赖安装
+      # macOS 环境依赖
       # ----------------------------------------------------------------
       - name: Install macOS Dependencies
         if: runner.os == 'macOS'
@@ -136,7 +135,7 @@ jobs:
           }
 
       # ----------------------------------------------------------------
-      # Windows 构建 (MSYS2) - 【关键修改点】
+      # Windows 构建 (MSYS2) - 【这里是重点修改】
       # ----------------------------------------------------------------
       - name: Build on Windows
         if: runner.os == 'Windows'
@@ -148,27 +147,32 @@ jobs:
           
           echo ">>> 1. Creating Clean Release Directory..."
           mkdir release_dist
-          
-          # 先把 exe 复制到干净的目录
           cp build/AdaptixClient.exe release_dist/
           
-          echo ">>> 2. Running windeployqt on the Clean Directory..."
-          # 让 windeployqt 自动识别依赖，并吐到 release_dist
+          echo ">>> 2. Running windeployqt (Qt Dependencies)..."
           windeployqt --release --no-translations --compiler-runtime --dir release_dist release_dist/AdaptixClient.exe
 
-          echo ">>> 3. Manually Copying Missing MinGW DLLs..."
-          # 暴力解决 "libgcc_s_seh-1.dll not found" 等问题
-          # 这些文件在 MSYS2 UCRT64 的 /ucrt64/bin 目录下
+          echo ">>> 3. Auto-Resolving System DLLs (The Nuclear Option)..."
+          # 使用 ldd 命令列出 exe 的所有依赖
+          # grep "/ucrt64/bin": 只筛选 MSYS2 系统目录下的 DLL
+          # awk '{print $3}': 提取文件全路径
+          # while loop: 一个个复制过去
           
-          cp /ucrt64/bin/libgcc_s_seh-1.dll release_dist/
-          cp /ucrt64/bin/libstdc++-6.dll release_dist/
-          cp /ucrt64/bin/libwinpthread-1.dll release_dist/
+          ldd release_dist/AdaptixClient.exe | grep "/ucrt64/bin" | awk '{print $3}' | while read -r dep; do
+              echo "  -> Copying dependency: $dep"
+              cp "$dep" release_dist/
+          done
+
+          # 这里做一个双重保险，防止 ldd 漏掉某些间接依赖 (比如 libstdc++)
+          # 虽然上面的循环应该能抓到，但强制覆盖一下不亏
+          cp /ucrt64/bin/libgcc_s_seh-1.dll release_dist/ 2>/dev/null || true
+          cp /ucrt64/bin/libstdc++-6.dll release_dist/ 2>/dev/null || true
+          cp /ucrt64/bin/libwinpthread-1.dll release_dist/ 2>/dev/null || true
           
-          # 为了保险，把常见的 SSP 库也拷进去（有些加固编译需要）
-          if [ -f /ucrt64/bin/libssp-0.dll ]; then cp /ucrt64/bin/libssp-0.dll release_dist/; fi
+          echo ">>> DLL Collection Complete."
 
       # ----------------------------------------------------------------
-      # 打包与上传 - 【关键修改点：Windows 打包源变更】
+      # 打包与上传
       # ----------------------------------------------------------------
       - name: Prepare Artifact
         shell: bash
@@ -177,12 +181,9 @@ jobs:
           
           if [ "${{ runner.os }}" == "Windows" ]; then
              echo "Zipping Clean Windows Release..."
-             # 关键：我们只进入 release_dist 目录打包，这样里面就只有 exe 和 dll
-             # 不会再包含 CMakeFiles, autogen 等垃圾文件
              cd AdaptixClient/release_dist
              7z a ../../final_dist/${{ matrix.artifact_name }} .
           else
-             # Linux/Mac 逻辑保持不变
              if [ -f "${{ matrix.output_file }}" ]; then
                 cp ${{ matrix.output_file }} final_dist/${{ matrix.artifact_name }}
              else
