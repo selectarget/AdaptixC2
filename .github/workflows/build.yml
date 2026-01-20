@@ -38,34 +38,6 @@ jobs:
           path: adaptix_server_linux_x64.tar.gz
 
 # ====================================================
-  # JOB 2: 构建客户端 (依赖修复版 - 补全 WebSockets)
-  # ====================================================
-  build-client:
-    name: Build Client
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            artifact_name: adaptix_client_linux_elf
-            build_shell: bash
-            output_file: dist/AdaptixClient
-
-          - os: macos-latest
-            artifact_name: adaptix_client_macos_macho
-            build_shell: bash
-            output_file: dist/AdaptixClient
-
-          - os: windows-latest
-            artifact_name: adaptix_client_windows.zip
-            build_shell: msys2 {0}
-            output_file: AdaptixClient/build/AdaptixClient.exe
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-# ====================================================
   # JOB 2: 构建客户端 (重装甲版 - 全量依赖)
   # ====================================================
   build-client:
