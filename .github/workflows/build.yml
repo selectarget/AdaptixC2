@@ -65,9 +65,37 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+# ====================================================
+  # JOB 2: 构建客户端 (重装甲版 - 全量依赖)
+  # ====================================================
+  build-client:
+    name: Build Client
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: adaptix_client_linux_elf
+            build_shell: bash
+            output_file: dist/AdaptixClient
+
+          - os: macos-latest
+            artifact_name: adaptix_client_macos_macho
+            build_shell: bash
+            output_file: dist/AdaptixClient
+
+          - os: windows-latest
+            artifact_name: adaptix_client_windows.zip
+            build_shell: msys2 {0}
+            output_file: AdaptixClient/build/AdaptixClient.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       # ----------------------------------------------------------------
-      # Windows 环境配置 (修复：新增 qt6-websockets)
+      # Windows 环境配置 (MSYS2 全家桶)
       # ----------------------------------------------------------------
       - name: Setup MSYS2 (Windows Only)
         if: runner.os == 'Windows'
@@ -75,32 +103,50 @@ jobs:
         with:
           msystem: UCRT64
           update: true
+          # 这里列出了 Qt 开发最常用的所有核心模块
           install: >-
             git
             mingw-w64-ucrt-x86_64-toolchain
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-qt6-base
-            mingw-w64-ucrt-x86_64-qt6-websockets
             mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-declarative
+            mingw-w64-ucrt-x86_64-qt6-websockets
+            mingw-w64-ucrt-x86_64-qt6-svg
+            mingw-w64-ucrt-x86_64-qt6-shadertools
+            mingw-w64-ucrt-x86_64-qt6-imageformats
+            mingw-w64-ucrt-x86_64-qt6-multimedia
+            mingw-w64-ucrt-x86_64-qt6-tools
+            mingw-w64-ucrt-x86_64-qt6-5compat
 
       # ----------------------------------------------------------------
-      # Linux 环境依赖安装 (修复：新增 libqt6websockets6-dev)
+      # Linux 环境依赖安装 (Ubuntu 全家桶)
       # ----------------------------------------------------------------
       - name: Install Linux Dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          # 注意：这里增加了 libqt6websockets6-dev
+          # 这里对应安装了 Ubuntu 下的所有对应开发库
           sudo apt-get install -y build-essential cmake libssl-dev pkg-config \
-            qt6-base-dev libqt6websockets6-dev libgl1-mesa-dev libxkbcommon-dev
+            libgl1-mesa-dev libxkbcommon-dev \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            libqt6websockets6-dev \
+            libqt6svg6-dev \
+            libqt6shadertools6-dev \
+            qt6-multimedia-dev \
+            qt6-tools-dev \
+            qt6-l10n-tools \
+            qt6-image-formats-plugins
 
       # ----------------------------------------------------------------
-      # macOS 环境依赖安装 (Homebrew 的 qt6 通常包含 websockets，保持不变)
+      # macOS 环境依赖安装
       # ----------------------------------------------------------------
       - name: Install macOS Dependencies
         if: runner.os == 'macOS'
         run: |
+          # Homebrew 的 qt6 包本来就是巨大的全家桶，不需要拆分安装
           brew install qt6
           echo "CMAKE_PREFIX_PATH=$(brew --prefix qt6)" >> $GITHUB_ENV
 
