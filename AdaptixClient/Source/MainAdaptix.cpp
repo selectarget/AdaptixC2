@@ -97,10 +97,16 @@ void MainAdaptix::Start() const
         break;
     }
 
+    ApplyApplicationFont();
+
     mainUI->setMinimumSize(500, 500);
     mainUI->resize(1024, 768);
     mainUI->showMaximized();
     mainUI->AddNewProject(authProfile, ChannelThread, ChannelWsWorker);
+
+    QTimer::singleShot(0, [this]() {
+        ApplyApplicationFont();
+    });
 
     QApplication::exec();
 }
@@ -209,15 +215,17 @@ void MainAdaptix::SetApplicationTheme() const
 
     QGuiApplication::setWindowIcon( QIcon( ":/LogoLin" ) );
 
+    FontManager::instance().initialize();
+
     auto* style = new oclero::qlementine::QlementineStyle(qApp);
     QString userPath = QDir(QDir::homePath()).filePath(".adaptix/themes/app/" + settings->data.MainTheme + ".json");
     QString themePath = QFile::exists(userPath) ? userPath : QString(":/qlementine-themes/%1").arg(settings->data.MainTheme);
     style->setThemeJsonPath(themePath);
     const_cast<MainAdaptix*>(this)->qlementineStyle = style;
-    QApplication::setStyle(style);
 
-    FontManager::instance().initialize();
     ApplyApplicationFont();
+
+    QApplication::setStyle(style);
 
     QString additionalStyles = R"(
         QMenu::separator {

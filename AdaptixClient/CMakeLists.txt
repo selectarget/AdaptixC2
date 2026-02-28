@@ -14,9 +14,12 @@ set(QT_NO_PRIVATE_MODULE_WARNING ON)
 add_subdirectory(Libs/kddockwidgets)
 add_subdirectory(Libs/qlementine)
 
+if(WIN32 AND MINGW)
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
+endif()
 find_package( OpenSSL REQUIRED )
 
-if(WIN32)
+if(WIN32 AND MINGW)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-subsystem,windows")
 endif()
 
@@ -291,6 +294,8 @@ if(WIN32)
             userenv
             dwmapi
     )
+    target_link_options( AdaptixClient PRIVATE -static-libgcc -static-libstdc++ )
+    target_link_libraries( AdaptixClient PRIVATE -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic )
 elseif(UNIX)
     target_link_libraries( AdaptixClient
             PRIVATE

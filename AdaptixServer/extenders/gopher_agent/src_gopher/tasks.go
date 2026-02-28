@@ -679,8 +679,11 @@ func jobExecBofAsync(paramsData []byte) ([]byte, error) {
 	JOBS[params.Task] = connection
 
 	go func() {
+		bofFinished := false
 		defer func() {
-			asyncBof.Cleanup()
+			if bofFinished {
+				asyncBof.Cleanup()
+			}
 			connection.HandleCancel()
 			_ = conn.Close()
 			delete(JOBS, params.Task)
@@ -769,7 +772,13 @@ func jobExecBofAsync(paramsData []byte) ([]byte, error) {
 
 		select {
 		case <-asyncBof.Done:
+			bofFinished = true
 		case <-connection.Ctx.Done():
+			select {
+			case <-asyncBof.Done:
+				bofFinished = true
+			case <-time.After(3 * time.Second):
+			}
 		}
 
 	drainLoop:
