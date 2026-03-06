@@ -110,7 +110,8 @@ jobs:
           host: 'linux'
           target: 'desktop'
           arch: 'linux_gcc_64'
-          modules: 'qtwebsockets qtsvg qtshadertools qtmultimedia qtimageformats qt5compat'
+          modules: 'qtwebsockets qtmultimedia qtimageformats qt5compat'
+
 
       # ----------------------------------------------------------------
       # macOS 环境依赖
