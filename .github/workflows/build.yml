@@ -95,21 +95,22 @@ jobs:
       # ----------------------------------------------------------------
       # Linux 环境依赖
       # ----------------------------------------------------------------
-      - name: Install Linux Dependencies
+
+      - name: Install Linux System Dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake libssl-dev pkg-config \
-            libgl1-mesa-dev libxkbcommon-dev \
-            qt6-base-dev qt6-base-private-dev \
-            qt6-declarative-dev qt6-declarative-private-dev \
-            libqt6websockets6-dev \
-            libqt6svg6-dev \
-            libqt6shadertools6-dev \
-            qt6-multimedia-dev \
-            qt6-tools-dev \
-            qt6-l10n-tools \
-            qt6-image-formats-plugins
+            libgl1-mesa-dev libxkbcommon-dev
+      - name: Install Qt 6.7 (Linux)
+        if: runner.os == 'Linux'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.0'
+          host: 'linux'
+          target: 'desktop'
+          arch: 'linux_gcc_64'
+          modules: 'qtwebsockets qtsvg qtshadertools qtmultimedia qtimageformats qt5compat'
 
       # ----------------------------------------------------------------
       # macOS 环境依赖
